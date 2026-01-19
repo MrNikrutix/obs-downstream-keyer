@@ -18,6 +18,26 @@
 
 extern obs_websocket_vendor vendor;
 
+// --- NOWY KOD: Callback do obsługi żądania WebSocket ---
+static void handle_switch_scene_request(obs_data_t *request_data, obs_data_t *response_data, void *priv_data)
+{
+	Q_UNUSED(response_data);
+	DownstreamKeyer *dsk = static_cast<DownstreamKeyer *>(priv_data);
+	if (!dsk)
+		return;
+
+	const char *scene_name = obs_data_get_string(request_data, "scene");
+	QString qSceneName = scene_name ? QString::fromUtf8(scene_name) : QString();
+
+	// Używamy QTimer::singleShot(0, ...), aby bezpiecznie wykonać operację na głównym wątku UI
+	// Jest to konieczne, ponieważ callback websocket może przyjść z innego wątku,
+	// a SwitchToScene manipuluje interfejsem Qt.
+	QTimer::singleShot(0, dsk, [dsk, qSceneName]() {
+		dsk->SwitchToScene(qSceneName);
+	});
+}
+// -------------------------------------------------------
+
 DownstreamKeyer::DownstreamKeyer(int channel, QString name, obs_view_t *v, obs_canvas_t *c, get_transitions_callback_t gt,
 				 void *gtd)
 	: outputChannel(channel),
@@ -152,10 +172,22 @@ DownstreamKeyer::DownstreamKeyer(int channel, QString name, obs_view_t *v, obs_c
 		hideTimer.stop();
 		on_actionSceneNull_triggered();
 	});
+
+	// --- NOWY KOD: Rejestracja Requestu ---
+	if (vendor) {
+		obs_websocket_vendor_register_request(vendor, "switch_scene", handle_switch_scene_request, this);
+	}
+	// --------------------------------------
 }
 
 DownstreamKeyer::~DownstreamKeyer()
 {
+	// --- NOWY KOD: Wyrejestrowanie Requestu ---
+	if (vendor) {
+		obs_websocket_vendor_unregister_request(vendor, "switch_scene");
+	}
+	// ----------------------------------------
+
 	if (view) {
 		//obs_view_set_source(view, outputChannel, nullptr);
 	} else if (canvas) {
@@ -1064,3 +1096,5 @@ LockedCheckBox::LockedCheckBox()
 }
 
 LockedCheckBox::LockedCheckBox(QWidget *parent) : QCheckBox(parent) {}
+
+}
