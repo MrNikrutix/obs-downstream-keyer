@@ -9,6 +9,7 @@
 #include <QSpinBox>
 #include <QToolBar>
 #include <QVBoxLayout>
+#include <QTimer>
 #include <obs-frontend-api.h>
 
 #include "obs-module.h"
@@ -1096,5 +1097,3 @@ LockedCheckBox::LockedCheckBox()
 }
 
 LockedCheckBox::LockedCheckBox(QWidget *parent) : QCheckBox(parent) {}
-
-}
