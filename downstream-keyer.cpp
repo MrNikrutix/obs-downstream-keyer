@@ -19,23 +19,48 @@
 
 extern obs_websocket_vendor vendor;
 
-// --- NOWY KOD: Callback do obsługi żądania WebSocket ---
+// --- CALLBACK: Przełączanie sceny ---
 static void handle_switch_scene_request(obs_data_t *request_data, obs_data_t *response_data, void *priv_data)
 {
 	Q_UNUSED(response_data);
 	DownstreamKeyer *dsk = static_cast<DownstreamKeyer *>(priv_data);
-	if (!dsk)
-		return;
+	if (!dsk) return;
 
 	const char *scene_name = obs_data_get_string(request_data, "scene");
 	QString qSceneName = scene_name ? QString::fromUtf8(scene_name) : QString();
 
-	// Używamy QTimer::singleShot(0, ...), aby bezpiecznie wykonać operację na głównym wątku UI
-	// Jest to konieczne, ponieważ callback websocket może przyjść z innego wątku,
-	// a SwitchToScene manipuluje interfejsem Qt.
 	QTimer::singleShot(0, dsk, [dsk, qSceneName]() {
 		dsk->SwitchToScene(qSceneName);
 	});
+}
+
+// --- CALLBACK: Pobieranie listy scen (NOWE) ---
+static void handle_get_scene_list_request(obs_data_t *request_data, obs_data_t *response_data, void *priv_data)
+{
+	Q_UNUSED(request_data);
+	DownstreamKeyer *dsk = static_cast<DownstreamKeyer *>(priv_data);
+	if (!dsk) return;
+
+	// Musimy to zrobić w głównym wątku, bo dotykamy UI (scenesList)
+	// Ponieważ request musi zwrócić dane synchronicznie lub asynchronicznie,
+	// tutaj zakładamy proste pobranie danych. W Qt dostęp do UI z innego wątku jest ryzykowny,
+	// ale w kontekście OBS WebSocket requesty często biegną w tle. 
+	// Jednak QListWidget przechowuje dane lokalnie.
+	
+	obs_data_array_t *scenes_array = obs_data_array_create();
+
+    // Iterujemy po liście scen w widgecie
+	for (int i = 0; i < dsk->scenesList->count(); i++) {
+		QListWidgetItem *item = dsk->scenesList->item(i);
+		obs_data_t *scene_obj = obs_data_create();
+		obs_data_set_string(scene_obj, "name", item->text().toUtf8().constData());
+		obs_data_set_int(scene_obj, "index", i);
+		obs_data_array_push_back(scenes_array, scene_obj);
+		obs_data_release(scene_obj);
+	}
+
+	obs_data_set_array(response_data, "scenes", scenes_array);
+	obs_data_array_release(scenes_array);
 }
 // -------------------------------------------------------
 
@@ -174,20 +199,22 @@ DownstreamKeyer::DownstreamKeyer(int channel, QString name, obs_view_t *v, obs_c
 		on_actionSceneNull_triggered();
 	});
 
-	// --- NOWY KOD: Rejestracja Requestu ---
+	// --- REJESTRACJA REQUESTÓW ---
 	if (vendor) {
 		obs_websocket_vendor_register_request(vendor, "switch_scene", handle_switch_scene_request, this);
+		obs_websocket_vendor_register_request(vendor, "get_scene_list", handle_get_scene_list_request, this);
 	}
-	// --------------------------------------
+	// -----------------------------
 }
 
 DownstreamKeyer::~DownstreamKeyer()
 {
-	// --- NOWY KOD: Wyrejestrowanie Requestu ---
+	// --- WYREJESTROWANIE REQUESTÓW ---
 	if (vendor) {
 		obs_websocket_vendor_unregister_request(vendor, "switch_scene");
+		obs_websocket_vendor_unregister_request(vendor, "get_scene_list");
 	}
-	// ----------------------------------------
+	// ---------------------------------
 
 	if (view) {
 		//obs_view_set_source(view, outputChannel, nullptr);
