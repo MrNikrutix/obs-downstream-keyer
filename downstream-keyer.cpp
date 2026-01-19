@@ -10,6 +10,7 @@
 #include <QToolBar>
 #include <QVBoxLayout>
 #include <QTimer>
+#include <QMetaObject> // Dodano dla invokeMethod
 #include <obs-frontend-api.h>
 
 #include "obs-module.h"
@@ -34,33 +35,37 @@ static void handle_switch_scene_request(obs_data_t *request_data, obs_data_t *re
 	});
 }
 
-// --- CALLBACK: Pobieranie listy scen (NOWE) ---
+// --- CALLBACK: Pobieranie listy scen (POPRAWIONE) ---
 static void handle_get_scene_list_request(obs_data_t *request_data, obs_data_t *response_data, void *priv_data)
 {
 	Q_UNUSED(request_data);
 	DownstreamKeyer *dsk = static_cast<DownstreamKeyer *>(priv_data);
 	if (!dsk) return;
 
-	// Musimy to zrobić w głównym wątku, bo dotykamy UI (scenesList)
-	// Ponieważ request musi zwrócić dane synchronicznie lub asynchronicznie,
-	// tutaj zakładamy proste pobranie danych. W Qt dostęp do UI z innego wątku jest ryzykowny,
-	// ale w kontekście OBS WebSocket requesty często biegną w tle. 
-	// Jednak QListWidget przechowuje dane lokalnie.
-	
-	obs_data_array_t *scenes_array = obs_data_array_create();
+	// Używamy QMetaObject::invokeMethod z Qt::BlockingQueuedConnection.
+	// 1. Zapewnia to bezpieczeństwo wątków (dostęp do UI tylko z głównego wątku).
+	// 2. BlockingQueuedConnection sprawia, że czekamy na wynik, zanim zwrócimy odpowiedź do WebSocket.
+	QMetaObject::invokeMethod(dsk, [dsk, response_data]() {
+		// Obejście błędu C2248 (private member):
+		// Zamiast dsk->scenesList, szukamy widgetu po nazwie nadanej w konstruktorze.
+		QListWidget *list = dsk->findChild<QListWidget*>("scenes");
+		
+		if (list) {
+			obs_data_array_t *scenes_array = obs_data_array_create();
 
-    // Iterujemy po liście scen w widgecie
-	for (int i = 0; i < dsk->scenesList->count(); i++) {
-		QListWidgetItem *item = dsk->scenesList->item(i);
-		obs_data_t *scene_obj = obs_data_create();
-		obs_data_set_string(scene_obj, "name", item->text().toUtf8().constData());
-		obs_data_set_int(scene_obj, "index", i);
-		obs_data_array_push_back(scenes_array, scene_obj);
-		obs_data_release(scene_obj);
-	}
+			for (int i = 0; i < list->count(); i++) {
+				QListWidgetItem *item = list->item(i);
+				obs_data_t *scene_obj = obs_data_create();
+				obs_data_set_string(scene_obj, "name", item->text().toUtf8().constData());
+				obs_data_set_int(scene_obj, "index", i);
+				obs_data_array_push_back(scenes_array, scene_obj);
+				obs_data_release(scene_obj);
+			}
 
-	obs_data_set_array(response_data, "scenes", scenes_array);
-	obs_data_array_release(scenes_array);
+			obs_data_set_array(response_data, "scenes", scenes_array);
+			obs_data_array_release(scenes_array);
+		}
+	}, Qt::BlockingQueuedConnection);
 }
 // -------------------------------------------------------
 
